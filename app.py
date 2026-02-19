@@ -1,9 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import gspread
 from PIL import Image
-import unicodedata
 
 # -----------------------------------------------------------
 # CONFIGURAÇÃO DE PÁGINA
@@ -11,7 +9,7 @@ import unicodedata
 st.set_page_config(layout="wide", page_title="Monitoramento Ergonômico", initial_sidebar_state="collapsed")
 st.title("🧍‍♂️ Monitoramento Ergonômico")
 
-# Esconde controles da barra lateral para interface limpa
+# Esconde controles da barra lateral
 st.markdown("""
     <style>
         [data-testid="stSidebarNav"] {display: none;}
@@ -22,31 +20,20 @@ st.markdown("""
 @st.cache_data(ttl=60)
 def load_data():
     try:
-        # AJUSTE DE CONEXÃO: Tenta primeiro as Secrets (Nuvem) e depois o arquivo local (PC)
-        if "gcp_service_account" in st.secrets:
-            # Para rodar no Streamlit Cloud
-            creds_dict = dict(st.secrets["gcp_service_account"])
-            client = gspread.service_account_from_dict(creds_dict)
-        else:
-            # Para rodar localmente no seu PC (usando o arquivo na pasta)
-            client = gspread.service_account(filename="credencial.json")
-            
-        spreadsheet = client.open("ergonomia")
-        worksheet = spreadsheet.worksheet("Respostas ao formulário 1")
-        values = worksheet.get_all_values()
+        # Link direto para exportação em CSV da sua planilha pública
+        sheet_id = "1du_b9wsAlgvhrjyY0ts9x3Js_4FWDbWujRvi6PKMGEQ"
+        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
         
-        if not values: 
-            return pd.DataFrame()
-        
-        return pd.DataFrame(values[1:], columns=values[0])
+        df = pd.read_csv(url)
+        return df
     except Exception as e:
-        st.error(f"Erro na conexão com o Google Sheets: {e}")
+        st.error(f"Erro ao ler a planilha: {e}")
         return pd.DataFrame()
 
 df_original = load_data()
 
 if df_original.empty:
-    st.warning("Aguardando conexão com os dados ou planilha vazia...")
+    st.warning("Aguardando dados da planilha pública...")
     st.stop()
 
 # -----------------------------------------------------------
@@ -57,10 +44,6 @@ coluna_setor = next((c for c in colunas if "setor" in c.lower()), None)
 coluna_data = next((c for c in colunas if "carimbo" in c.lower() or "data" in c.lower()), None)
 coluna_dor = next((c for c in colunas if "local da dor" in c.lower()), None)
 coluna_lider = next((c for c in colunas if "liderança" in c.lower()), None)
-
-if coluna_setor:
-    df_original[coluna_setor] = df_original[coluna_setor].astype(str).str.strip()
-    df_original = df_original[~df_original[coluna_setor].str.lower().isin(['nan', 'none', ''])]
 
 if coluna_data:
     df_original[coluna_data] = pd.to_datetime(df_original[coluna_data], dayfirst=True, errors='coerce')
@@ -73,8 +56,8 @@ with c1:
     mes_sel = st.selectbox("Selecione o Mês:", ["Todos os Meses"] + meses)
 
 with c2:
-    setores_unicos = sorted(list(set([s for s in df_original[coluna_setor].unique() if s]))) if coluna_setor else []
-    setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + setores_unicos)
+    setores = sorted(list(set([s for s in df_original[coluna_setor].unique() if s]))) if coluna_setor else []
+    setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + setores)
 
 df_f = df_original.copy()
 if mes_sel != "Todos os Meses": df_f = df_f[df_f["MesAno"] == mes_sel]
@@ -86,30 +69,21 @@ with c3:
     if lider_sel: df_f = df_f[df_f[coluna_lider].isin(lider_sel)]
 
 # -----------------------------------------------------------
-# MAPA E COORDENADAS
+# MAPA E GRÁFICOS
 # -----------------------------------------------------------
 if df_f.empty:
-    st.info("Sem dados para esta combinação de filtros.")
+    st.info("Sem dados para os filtros selecionados.")
     st.stop()
 
-# Prepara contagem de dores
 df_dores = df_f[coluna_dor].str.get_dummies(sep=",")
 df_dores.columns = df_dores.columns.str.strip()
 df_contagem = df_dores.sum().reset_index().rename(columns={"index": "Parte", 0: "Qtd"})
 
-# Coordenadas do mapa (X, Y)
 coords = {
-    "Braços/Punho": [250, 350], 
-    "Mãos": [110, 510], 
-    "Antebraço/Punho": [415, 610], 
-    "Cotovelo": [300, 680], 
-    "Ombro(s)": [650, 785], 
-    "Coluna Cervical (Pescoço)": [744, 840], 
-    "Coluna Torácica(Costas)": [744, 740], 
-    "Coluna Lombar": [744, 570],
-    "Joelho": [230, 310], 
-    "Tornezelo": [686, 130], 
-    "Pé": [350, 85],
+    "Braços/Punho": [250, 350], "Mãos": [110, 510], "Antebraço/Punho": [415, 610],
+    "Cotovelo": [300, 680], "Ombro(s)": [650, 785], "Coluna Cervical (Pescoço)": [744, 840],
+    "Coluna Torácica(Costas)": [744, 740], "Coluna Lombar": [744, 570],
+    "Joelho": [230, 310], "Tornezelo": [686, 130], "Pé": [350, 85],
 }
 
 df_c = pd.DataFrame.from_dict(coords, orient="index", columns=["x", "y"]).reset_index().rename(columns={"index": "Parte"})
@@ -121,31 +95,16 @@ with col_map:
     try:
         img = Image.open("mapa_corporal.png")
         w, h = img.size
-        
         fig = px.scatter(df_mapa[df_mapa["Qtd"] > 0], x="x", y="y", size="Qtd", color="Qtd",
                          color_continuous_scale="RdYlGn_r", text="Qtd", size_max=50)
-
-        fig.update_traces(
-            textfont=dict(size=16, family="Arial Black", color="black"),
-            textposition='middle center',
-            text=df_mapa[df_mapa["Qtd"] > 0]["Qtd"].apply(lambda x: f"<b>{x}</b>")
-        )
-
-        fig.add_layout_image(dict(
-            source=img, xref="x", yref="y", x=0, y=h, 
-            sizex=w, sizey=h, sizing="stretch", layer="below"
-        ))
-
+        fig.add_layout_image(dict(source=img, xref="x", yref="y", x=0, y=h, sizex=w, sizey=h, sizing="stretch", layer="below"))
         fig.update_xaxes(visible=False, range=[0, w], autorange=False)
         fig.update_yaxes(visible=False, range=[0, h], autorange=False)
-        fig.update_layout(height=700, margin=dict(l=0, r=0, t=0, b=0), coloraxis_showscale=True)
-        
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-    except FileNotFoundError:
-        st.error("Arquivo 'mapa_corporal.png' não encontrado na pasta do projeto.")
-    except Exception as e:
-        st.error(f"Erro ao gerar o mapa: {e}")
+        fig.update_layout(height=700, margin=dict(l=0, r=0, t=0, b=0))
+        st.plotly_chart(fig, use_container_width=True)
+    except:
+        st.error("Imagem 'mapa_corporal.png' não encontrada.")
 
 with col_tab:
-    st.subheader("📊 Dados Detalhados")
+    st.subheader("📊 Frequência")
     st.dataframe(df_contagem.sort_values("Qtd", ascending=False), hide_index=True, use_container_width=True)
