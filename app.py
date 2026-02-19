@@ -6,7 +6,12 @@ from PIL import Image
 # -----------------------------------------------------------
 # CONFIGURAÇÃO DE PÁGINA
 # -----------------------------------------------------------
-st.set_page_config(layout="wide", page_title="Monitoramento Ergonômico", initial_sidebar_state="collapsed")
+st.set_page_config(
+    layout="wide",
+    page_title="Monitoramento Ergonômico",
+    initial_sidebar_state="collapsed"
+)
+
 st.title("🧍‍♂️ Monitoramento Ergonômico")
 
 st.markdown("""
@@ -16,6 +21,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# -----------------------------------------------------------
+# CARREGAMENTO DOS DADOS
+# -----------------------------------------------------------
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -38,33 +46,63 @@ if df_original.empty:
 # -----------------------------------------------------------
 colunas = df_original.columns.tolist()
 
-coluna_setor = next((c for c in colunas if "setor" in c.lower().replace(":", "").strip()), None)
-coluna_data = next((c for c in colunas if "carimbo" in c.lower() or "data" in c.lower()), None)
-coluna_dor = next((c for c in colunas if "local da dor" in c.lower() or "indique o local" in c.lower()), None)
-coluna_lider = next((c for c in colunas if "liderança" in c.lower()), None)
+coluna_setor = next(
+    (c for c in colunas if "setor" in c.lower().replace(":", "").strip()),
+    None
+)
+
+coluna_data = next(
+    (c for c in colunas if "carimbo" in c.lower() or "data" in c.lower()),
+    None
+)
+
+coluna_dor = next(
+    (c for c in colunas if "local da dor" in c.lower() or "indique o local" in c.lower()),
+    None
+)
+
+coluna_lider = next(
+    (c for c in colunas if "liderança" in c.lower()),
+    None
+)
 
 # -----------------------------------------------------------
-# LIMPEZA CORRIGIDA DO SETOR
+# LIMPEZA E NORMALIZAÇÃO DOS SETORES (CORREÇÃO FINAL)
 # -----------------------------------------------------------
 if coluna_setor:
     df_original[coluna_setor] = (
         df_original[coluna_setor]
         .astype(str)
-        .str.replace("\xa0", " ", regex=False)  # remove espaço invisível do Google Sheets
+        .str.replace("\xa0", " ", regex=False)
         .str.strip()
     )
 
     df_original[coluna_setor] = df_original[coluna_setor].replace(
-        ['nan', 'None', '', 'NaN'], pd.NA
+        ['nan', 'None', '', 'NaN'],
+        pd.NA
     )
 
     df_original = df_original.dropna(subset=[coluna_setor])
 
+    # 🔥 CORREÇÃO PRINCIPAL
+    df_original[coluna_setor] = df_original[coluna_setor].str.split(",")
+
+    # separa múltiplos setores em linhas diferentes
+    df_original = df_original.explode(coluna_setor)
+
+    # limpeza final
+    df_original[coluna_setor] = df_original[coluna_setor].str.strip()
+
 # -----------------------------------------------------------
-# TRATAMENTO DATA
+# TRATAMENTO DE DATA
 # -----------------------------------------------------------
 if coluna_data:
-    df_original[coluna_data] = pd.to_datetime(df_original[coluna_data], dayfirst=True, errors='coerce')
+    df_original[coluna_data] = pd.to_datetime(
+        df_original[coluna_data],
+        dayfirst=True,
+        errors='coerce'
+    )
+
     df_original = df_original.dropna(subset=[coluna_data])
     df_original["MesAno"] = df_original[coluna_data].dt.to_period("M").astype(str)
 
@@ -79,17 +117,25 @@ with c1:
 
 with c2:
     if coluna_setor:
-        setores_lista = sorted(df_original[coluna_setor].unique())
+        setores_lista = sorted(df_original[coluna_setor].dropna().unique())
     else:
         setores_lista = []
+
     setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + list(setores_lista))
 
 with c3:
     if coluna_lider:
-        lideres_brutos = df_original[coluna_lider].astype(str).replace(['nan', 'None', ''], pd.NA).dropna().unique()
-        lideres = sorted(list(lideres_brutos))
+        lideres = (
+            df_original[coluna_lider]
+            .astype(str)
+            .replace(['nan', 'None', ''], pd.NA)
+            .dropna()
+            .unique()
+        )
+        lideres = sorted(lideres)
     else:
         lideres = []
+
     lider_sel = st.multiselect("Selecione a(s) Liderança(s):", lideres)
 
 # -----------------------------------------------------------
@@ -97,32 +143,37 @@ with c3:
 # -----------------------------------------------------------
 df_f = df_original.copy()
 
-if mes_sel != "Todos os Meses": 
+if mes_sel != "Todos os Meses":
     df_f = df_f[df_f["MesAno"] == mes_sel]
 
-if setor_sel != "Todos os Setores": 
+if setor_sel != "Todos os Setores" and coluna_setor:
     df_f = df_f[df_f[coluna_setor] == setor_sel]
 
-if lider_sel: 
+if lider_sel and coluna_lider:
     df_f = df_f[df_f[coluna_lider].astype(str).isin(lider_sel)]
 
-# -----------------------------------------------------------
-# VALIDAÇÃO
-# -----------------------------------------------------------
 if df_f.empty:
     st.info("Nenhum dado encontrado para os filtros selecionados.")
     st.stop()
 
 # -----------------------------------------------------------
-# PROCESSAMENTO DAS DORES
+# CONTAGEM DAS DORES
 # -----------------------------------------------------------
-df_dores = df_f[coluna_dor].astype(str).str.get_dummies(sep=",")
-df_dores.columns = df_dores.columns.str.strip()
+if coluna_dor:
+    df_dores = df_f[coluna_dor].astype(str).str.get_dummies(sep=",")
+    df_dores.columns = df_dores.columns.str.strip()
 
-df_contagem = df_dores.sum().reset_index().rename(columns={"index": "Parte", 0: "Qtd"})
+    df_contagem = (
+        df_dores.sum()
+        .reset_index()
+        .rename(columns={"index": "Parte", 0: "Qtd"})
+    )
+else:
+    st.warning("Coluna de dor não encontrada.")
+    st.stop()
 
 # -----------------------------------------------------------
-# COORDENADAS DO MAPA
+# COORDENADAS DO MAPA CORPORAL
 # -----------------------------------------------------------
 coords = {
     "Braços / Mãos": [250, 350],
@@ -135,11 +186,16 @@ coords = {
     "Mãos": [110, 510]
 }
 
-df_c = pd.DataFrame.from_dict(coords, orient="index", columns=["x", "y"]).reset_index().rename(columns={"index": "Parte"})
+df_c = (
+    pd.DataFrame.from_dict(coords, orient="index", columns=["x", "y"])
+    .reset_index()
+    .rename(columns={"index": "Parte"})
+)
+
 df_mapa = pd.merge(df_c, df_contagem, on="Parte", how="inner")
 
 # -----------------------------------------------------------
-# VISUALIZAÇÃO
+# LAYOUT MAPA + TABELA
 # -----------------------------------------------------------
 col_map, col_tab = st.columns([0.6, 0.4])
 
@@ -164,20 +220,22 @@ with col_map:
             textposition='middle center'
         )
 
-        fig.add_layout_image(dict(
-            source=img,
-            xref="x",
-            yref="y",
-            x=0,
-            y=h,
-            sizex=w,
-            sizey=h,
-            sizing="stretch",
-            layer="below"
-        ))
+        fig.add_layout_image(
+            dict(
+                source=img,
+                xref="x",
+                yref="y",
+                x=0,
+                y=h,
+                sizex=w,
+                sizey=h,
+                sizing="stretch",
+                layer="below"
+            )
+        )
 
-        fig.update_xaxes(visible=False, range=[0, w])
-        fig.update_yaxes(visible=False, range=[0, h])
+        fig.update_xaxes(visible=False, range=[0, w], autorange=False)
+        fig.update_yaxes(visible=False, range=[0, h], autorange=False)
 
         fig.update_layout(
             height=700,
