@@ -6,7 +6,7 @@ from PIL import Image
 import unicodedata
 
 # -----------------------------------------------------------
-# CONFIGURAÇÃO DE PÁGINA (SEM BARRA LATERAL)
+# CONFIGURAÇÃO DE PÁGINA
 # -----------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Monitoramento Ergonômico", initial_sidebar_state="collapsed")
 st.title("🧍‍♂️ Monitoramento Ergonômico")
@@ -22,19 +22,31 @@ st.markdown("""
 @st.cache_data(ttl=60)
 def load_data():
     try:
-        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-        client = gspread.service_account(filename="credencial.json", scopes=scopes)
+        # AJUSTE DE CONEXÃO: Tenta primeiro as Secrets (Nuvem) e depois o arquivo local (PC)
+        if "gcp_service_account" in st.secrets:
+            # Para rodar no Streamlit Cloud
+            creds_dict = dict(st.secrets["gcp_service_account"])
+            client = gspread.service_account_from_dict(creds_dict)
+        else:
+            # Para rodar localmente no seu PC (usando o arquivo na pasta)
+            client = gspread.service_account(filename="credencial.json")
+            
         spreadsheet = client.open("ergonomia")
         worksheet = spreadsheet.worksheet("Respostas ao formulário 1")
         values = worksheet.get_all_values()
-        if not values: return pd.DataFrame()
+        
+        if not values: 
+            return pd.DataFrame()
+        
         return pd.DataFrame(values[1:], columns=values[0])
     except Exception as e:
-        st.error(f"Erro na conexão: {e}")
+        st.error(f"Erro na conexão com o Google Sheets: {e}")
         return pd.DataFrame()
 
 df_original = load_data()
+
 if df_original.empty:
+    st.warning("Aguardando conexão com os dados ou planilha vazia...")
     st.stop()
 
 # -----------------------------------------------------------
@@ -50,18 +62,18 @@ if coluna_setor:
     df_original[coluna_setor] = df_original[coluna_setor].astype(str).str.strip()
     df_original = df_original[~df_original[coluna_setor].str.lower().isin(['nan', 'none', ''])]
 
-df_original[coluna_data] = pd.to_datetime(df_original[coluna_data], dayfirst=True, errors='coerce')
-df_original = df_original.dropna(subset=[coluna_data])
-df_original["MesAno"] = df_original[coluna_data].dt.to_period("M").astype(str)
+if coluna_data:
+    df_original[coluna_data] = pd.to_datetime(df_original[coluna_data], dayfirst=True, errors='coerce')
+    df_original = df_original.dropna(subset=[coluna_data])
+    df_original["MesAno"] = df_original[coluna_data].dt.to_period("M").astype(str)
 
 c1, c2, c3 = st.columns(3)
 with c1:
-    meses = sorted(df_original["MesAno"].unique(), reverse=True)
+    meses = sorted(df_original["MesAno"].unique(), reverse=True) if "MesAno" in df_original.columns else []
     mes_sel = st.selectbox("Selecione o Mês:", ["Todos os Meses"] + meses)
 
 with c2:
-    # Captura GDR, Laminação, Acabamento e outros automaticamente
-    setores_unicos = sorted(list(set([s for s in df_original[coluna_setor].unique() if s])))
+    setores_unicos = sorted(list(set([s for s in df_original[coluna_setor].unique() if s]))) if coluna_setor else []
     setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + setores_unicos)
 
 df_f = df_original.copy()
@@ -74,17 +86,18 @@ with c3:
     if lider_sel: df_f = df_f[df_f[coluna_lider].isin(lider_sel)]
 
 # -----------------------------------------------------------
-# MAPA E COORDENADAS (AJUSTADO PARA LAMINAÇÃO E GDR)
+# MAPA E COORDENADAS
 # -----------------------------------------------------------
 if df_f.empty:
     st.info("Sem dados para esta combinação de filtros.")
     st.stop()
 
+# Prepara contagem de dores
 df_dores = df_f[coluna_dor].str.get_dummies(sep=",")
 df_dores.columns = df_dores.columns.str.strip()
 df_contagem = df_dores.sum().reset_index().rename(columns={"index": "Parte", 0: "Qtd"})
 
-# DICIONÁRIO AMPLIADO: Mapeia variações de nomes para garantir que Laminação e GDR funcionem
+# Coordenadas do mapa (X, Y)
 coords = {
     "Braços/Punho": [250, 350], 
     "Mãos": [110, 510], 
@@ -109,7 +122,6 @@ with col_map:
         img = Image.open("mapa_corporal.png")
         w, h = img.size
         
-        # Mapa de Calor reativado
         fig = px.scatter(df_mapa[df_mapa["Qtd"] > 0], x="x", y="y", size="Qtd", color="Qtd",
                          color_continuous_scale="RdYlGn_r", text="Qtd", size_max=50)
 
@@ -129,7 +141,10 @@ with col_map:
         fig.update_layout(height=700, margin=dict(l=0, r=0, t=0, b=0), coloraxis_showscale=True)
         
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-    except: st.error("Imagem mapa_corporal.png não encontrada.")
+    except FileNotFoundError:
+        st.error("Arquivo 'mapa_corporal.png' não encontrado na pasta do projeto.")
+    except Exception as e:
+        st.error(f"Erro ao gerar o mapa: {e}")
 
 with col_tab:
     st.subheader("📊 Dados Detalhados")
