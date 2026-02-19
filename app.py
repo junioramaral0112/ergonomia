@@ -40,14 +40,14 @@ if df_original.empty:
 # PROCESSAMENTO DE COLUNAS E FILTROS
 # -----------------------------------------------------------
 colunas = df_original.columns.tolist()
-coluna_setor = next((c for c in colunas if "setor" in c.lower()), None)
+coluna_Setor = next((c for c in colunas if "Setor" in c.lower()), None)
 coluna_data = next((c for c in colunas if "carimbo" in c.lower() or "data" in c.lower()), None)
 coluna_dor = next((c for c in colunas if "local da dor" in c.lower()), None)
 coluna_lider = next((c for c in colunas if "liderança" in c.lower()), None)
 
 # Tratamento de dados para evitar erros de tipo (TypeError)
-if coluna_setor:
-    df_original[coluna_setor] = df_original[coluna_setor].astype(str).fillna("Não Informado").str.strip()
+if coluna_Setor:
+    df_original[coluna_Setor] = df_original[coluna_Setor].astype(str).fillna("Não Informado").str.strip()
 
 if coluna_data:
     df_original[coluna_data] = pd.to_datetime(df_original[coluna_data], dayfirst=True, errors='coerce')
@@ -62,8 +62,8 @@ with c1:
     mes_sel = st.selectbox("Selecione o Mês:", ["Todos os Meses"] + meses)
 
 with c2:
-    setores = sorted([s for s in df_original[coluna_setor].unique() if s and s.lower() != "nan"]) if coluna_setor else []
-    setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + setores)
+    Setores = sorted([s for s in df_original[coluna_Setor].unique() if s and s.lower() != "nan"]) if coluna_Setor else []
+    Setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + Setores)
 
 with c3:
     # Solução para o erro da linha 67: Garante que a lista de líderes seja apenas de strings e sem nulos
@@ -78,8 +78,8 @@ with c3:
 df_f = df_original.copy()
 if mes_sel != "Todos os Meses": 
     df_f = df_f[df_f["MesAno"] == mes_sel]
-if setor_sel != "Todos os Setores": 
-    df_f = df_f[df_f[coluna_setor] == setor_sel]
+if Setor_sel != "Todos os Setores": 
+    df_f = df_f[df_f[coluna_Setor] == Setor_sel]
 if lider_sel: 
     df_f = df_f[df_f[coluna_lider].astype(str).isin(lider_sel)]
 
@@ -137,3 +137,4 @@ with col_map:
 with col_tab:
     st.subheader("📊 Frequência por Local")
     st.dataframe(df_contagem.sort_values("Qtd", ascending=False), hide_index=True, use_container_width=True)
+
