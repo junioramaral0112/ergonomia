@@ -19,6 +19,7 @@ st.markdown("""
 @st.cache_data(ttl=60)
 def load_data():
     try:
+        # Link da sua planilha pública (formato CSV)
         sheet_id = "1du_b9wsAlgvhrjyY0ts9x3Js_4FWDbWujRvi6PKMGEQ"
         url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
         df = pd.read_csv(url)
@@ -34,21 +35,22 @@ if df_original.empty:
     st.stop()
 
 # -----------------------------------------------------------
-# IDENTIFICAÇÃO DINÂMICA DE COLUNAS (VERSÃO SUPER FLEXÍVEL)
+# IDENTIFICAÇÃO DINÂMICA DE COLUNAS (VERSÃO CORRIGIDA)
 # -----------------------------------------------------------
-colunas = df_original.columns.tolist()
+# Removemos espaços e pontos das colunas para facilitar a busca
+colunas_limpas = [str(c).lower().replace(":", "").strip() for c in df_original.columns]
+mapeamento = dict(zip(colunas_limpas, df_original.columns))
 
-# Procura qualquer coluna que tenha a palavra 'setor', ignorando ':' ou espaços
-coluna_setor = next((c for c in colunas if "setor" in c.lower().replace(":", "").strip()), None)
-coluna_data = next((c for c in colunas if "carimbo" in c.lower() or "data" in c.lower()), None)
-coluna_dor = next((c for c in colunas if "local da dor" in c.lower() or "indique o local" in c.lower()), None)
-coluna_lider = next((c for c in colunas if "liderança" in c.lower()), None)
+coluna_setor = mapeamento.get("setor")
+coluna_data = next((mapeamento[c] for c in colunas_limpas if "carimbo" in c or "data" in c), None)
+coluna_dor = next((mapeamento[c] for c in colunas_limpas if "local da dor" in c or "indique o local" in c), None)
+coluna_lider = mapeamento.get("liderança")
 
 # Limpeza e Formatação dos Setores
 if coluna_setor:
-    # Converte para string, remove nulos e limpa espaços extras
+    # Forçamos a conversão para texto e removemos valores nulos
     df_original[coluna_setor] = df_original[coluna_setor].astype(str).str.strip()
-    df_original[coluna_setor] = df_original[coluna_setor].replace(['nan', 'None', ''], 'Não Informado')
+    df_original = df_original[df_original[coluna_setor].str.lower() != 'nan']
 
 if coluna_data:
     df_original[coluna_data] = pd.to_datetime(df_original[coluna_data], dayfirst=True, errors='coerce')
@@ -64,16 +66,15 @@ with c1:
 
 with c2:
     if coluna_setor:
-        # Pega os valores reais da coluna encontrada, ignorando o lixo (nan)
-        setores_lista = sorted([s for s in df_original[coluna_setor].unique() if s and s != "nan" and s != "Não Informado"])
+        # Pegamos os nomes reais (Acabamento, GDR, etc) ignorando vazios
+        setores_lista = sorted([s for s in df_original[coluna_setor].unique() if s and s.lower() != "nan"])
     else:
         setores_lista = []
     setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + setores_lista)
 
 with c3:
     if coluna_lider:
-        lideres_brutos = df_original[coluna_lider].astype(str).replace(['nan', 'None', ''], pd.NA).dropna().unique()
-        lideres = sorted(list(lideres_brutos))
+        lideres = sorted(df_original[coluna_lider].astype(str).dropna().unique().tolist())
     else:
         lideres = []
     lider_sel = st.multiselect("Selecione a(s) Liderança(s):", lideres)
@@ -94,12 +95,11 @@ if df_f.empty:
     st.info("Nenhum dado encontrado para os filtros selecionados.")
     st.stop()
 
-# Contagem das queixas
 df_dores = df_f[coluna_dor].str.get_dummies(sep=",")
 df_dores.columns = df_dores.columns.str.strip()
 df_contagem = df_dores.sum().reset_index().rename(columns={"index": "Parte", 0: "Qtd"})
 
-# Coordenadas (Ajustadas para os nomes da sua planilha)
+# Coordenadas ajustadas para os termos da sua planilha
 coords = {
     "Braços / Mãos": [250, 350], "Pernas / Joelho(s)": [230, 310], "PÉS": [350, 85],
     "pé": [350, 85], "Coluna (Costas)": [744, 740], "Ombro(s)": [650, 785],
@@ -129,4 +129,3 @@ with col_map:
 with col_tab:
     st.subheader("📊 Frequência por Local")
     st.dataframe(df_contagem.sort_values("Qtd", ascending=False), hide_index=True, use_container_width=True)
-
