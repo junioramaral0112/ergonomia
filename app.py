@@ -9,7 +9,6 @@ from PIL import Image
 st.set_page_config(layout="wide", page_title="Monitoramento Ergonômico", initial_sidebar_state="collapsed")
 st.title("🧍‍♂️ Monitoramento Ergonômico")
 
-# Esconde controles da barra lateral
 st.markdown("""
     <style>
         [data-testid="stSidebarNav"] {display: none;}
@@ -20,7 +19,6 @@ st.markdown("""
 @st.cache_data(ttl=60)
 def load_data():
     try:
-        # Link da sua planilha pública
         sheet_id = "1du_b9wsAlgvhrjyY0ts9x3Js_4FWDbWujRvi6PKMGEQ"
         url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
         df = pd.read_csv(url)
@@ -32,23 +30,25 @@ def load_data():
 df_original = load_data()
 
 if df_original.empty:
-    st.warning("Aguardando dados da planilha...")
+    st.warning("Aguardando carregamento dos dados...")
     st.stop()
 
 # -----------------------------------------------------------
-# IDENTIFICAÇÃO DINÂMICA DE COLUNAS
+# IDENTIFICAÇÃO DINÂMICA DE COLUNAS (VERSÃO SUPER FLEXÍVEL)
 # -----------------------------------------------------------
 colunas = df_original.columns.tolist()
 
-# Busca flexível: encontra a coluna mesmo que tenha "Setor", "Setor:" ou "SETOR"
-coluna_setor = next((c for c in colunas if "setor" in c.lower()), None)
+# Procura qualquer coluna que tenha a palavra 'setor', ignorando ':' ou espaços
+coluna_setor = next((c for c in colunas if "setor" in c.lower().replace(":", "").strip()), None)
 coluna_data = next((c for c in colunas if "carimbo" in c.lower() or "data" in c.lower()), None)
 coluna_dor = next((c for c in colunas if "local da dor" in c.lower() or "indique o local" in c.lower()), None)
 coluna_lider = next((c for c in colunas if "liderança" in c.lower()), None)
 
-# Limpeza da coluna Setor
+# Limpeza e Formatação dos Setores
 if coluna_setor:
-    df_original[coluna_setor] = df_original[coluna_setor].astype(str).replace(['nan', 'None', ''], 'Não Informado').str.strip()
+    # Converte para string, remove nulos e limpa espaços extras
+    df_original[coluna_setor] = df_original[coluna_setor].astype(str).str.strip()
+    df_original[coluna_setor] = df_original[coluna_setor].replace(['nan', 'None', ''], 'Não Informado')
 
 if coluna_data:
     df_original[coluna_data] = pd.to_datetime(df_original[coluna_data], dayfirst=True, errors='coerce')
@@ -63,9 +63,9 @@ with c1:
     mes_sel = st.selectbox("Selecione o Mês:", ["Todos os Meses"] + meses)
 
 with c2:
-    # Garante que pegamos os nomes reais (Acabamento, GDR, etc) da coluna identificada
     if coluna_setor:
-        setores_lista = sorted([s for s in df_original[coluna_setor].unique() if s and s.lower() != "nan" and s != "Não Informado"])
+        # Pega os valores reais da coluna encontrada, ignorando o lixo (nan)
+        setores_lista = sorted([s for s in df_original[coluna_setor].unique() if s and s != "nan" and s != "Não Informado"])
     else:
         setores_lista = []
     setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + setores_lista)
@@ -94,21 +94,16 @@ if df_f.empty:
     st.info("Nenhum dado encontrado para os filtros selecionados.")
     st.stop()
 
-# Processamento da contagem de dores
+# Contagem das queixas
 df_dores = df_f[coluna_dor].str.get_dummies(sep=",")
 df_dores.columns = df_dores.columns.str.strip()
 df_contagem = df_dores.sum().reset_index().rename(columns={"index": "Parte", 0: "Qtd"})
 
-# Coordenadas ajustadas para os nomes da sua planilha
+# Coordenadas (Ajustadas para os nomes da sua planilha)
 coords = {
-    "Braços / Mãos": [250, 350], 
-    "Pernas / Joelho(s)": [230, 310], 
-    "PÉS": [350, 85],
-    "pé": [350, 85],
-    "Coluna (Costas)": [744, 740], 
-    "Ombro(s)": [650, 785],
-    "Braços / Punho": [250, 350],
-    "Mãos": [110, 510]
+    "Braços / Mãos": [250, 350], "Pernas / Joelho(s)": [230, 310], "PÉS": [350, 85],
+    "pé": [350, 85], "Coluna (Costas)": [744, 740], "Ombro(s)": [650, 785],
+    "Braços / Punho": [250, 350], "Mãos": [110, 510]
 }
 
 df_c = pd.DataFrame.from_dict(coords, orient="index", columns=["x", "y"]).reset_index().rename(columns={"index": "Parte"})
@@ -120,29 +115,18 @@ with col_map:
     try:
         img = Image.open("mapa_corporal.png")
         w, h = img.size
-        
         fig = px.scatter(df_mapa[df_mapa["Qtd"] > 0], x="x", y="y", size="Qtd", color="Qtd",
                          color_continuous_scale="RdYlGn_r", text="Qtd", size_max=50)
-
-        fig.update_traces(
-            textfont=dict(size=14, family="Arial Black", color="black"),
-            textposition='middle center'
-        )
-
-        fig.add_layout_image(dict(
-            source=img, xref="x", yref="y", x=0, y=h, 
-            sizex=w, sizey=h, sizing="stretch", layer="below"
-        ))
-
+        fig.update_traces(textfont=dict(size=14, family="Arial Black", color="black"), textposition='middle center')
+        fig.add_layout_image(dict(source=img, xref="x", yref="y", x=0, y=h, sizex=w, sizey=h, sizing="stretch", layer="below"))
         fig.update_xaxes(visible=False, range=[0, w], autorange=False)
         fig.update_yaxes(visible=False, range=[0, h], autorange=False)
         fig.update_layout(height=700, margin=dict(l=0, r=0, t=0, b=0), coloraxis_showscale=True)
-        
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     except Exception as e:
-        st.error(f"Erro ao carregar o mapa corporal: {e}")
+        st.error(f"Erro no mapa: {e}")
 
 with col_tab:
     st.subheader("📊 Frequência por Local")
-    # Tabela detalhada
     st.dataframe(df_contagem.sort_values("Qtd", ascending=False), hide_index=True, use_container_width=True)
+
