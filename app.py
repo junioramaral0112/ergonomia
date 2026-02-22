@@ -8,6 +8,7 @@ import plotly.express as px
 st.set_page_config(layout="wide", page_title="Monitoramento Ergonômico", initial_sidebar_state="collapsed")
 st.title("🧍‍♂️ Monitoramento Ergonômico")
 
+# Estilo para esconder menus desnecessários
 st.markdown("""
     <style>
         [data-testid="stSidebarNav"] {display: none;}
@@ -33,64 +34,66 @@ if df_original.empty:
     st.stop()
 
 # -----------------------------------------------------------
-# IDENTIFICAÇÃO DINÂMICA E FILTRAGEM DE REGRAS
+# PROCESSAMENTO E REGRAS DE NEGÓCIO
 # -----------------------------------------------------------
 colunas = df_original.columns.tolist()
 
-# Mapeamento exato baseado na sua planilha
+# Identificação das colunas (Baseado na estrutura da sua planilha)
 col_sentindo_dor = colunas[4]  # Coluna E: "Hoje, você está sentindo alguma dor..."
 col_local_dor = colunas[5]     # Coluna F: "Se SIM, indique o local da dor:"
 col_lider = next((c for c in colunas if "liderança" in c.lower()), None)
 col_setor = next((c for c in colunas if "setor" in c.lower()), None)
 col_data = next((c for c in colunas if "carimbo" in c.lower() or "data" in c.lower() or "data" == c.lower()), None)
 
-# REGRA DE OURO: Filtrar apenas quem respondeu "Sim" na Coluna E
-df_sim = df_original[df_original[col_sentindo_dor].astype(str).str.upper().str.contains("SIM")].copy()
-
-# Limpeza e separação de setores (Trata "Lâminaçao, GDR" como dois registros separados)
+# 1. Limpeza de Setores: Trata "Lâminaçao, GDR" como entradas individuais
+df_base = df_original.copy()
 if col_setor:
-    df_sim[col_setor] = df_sim[col_setor].astype(str).str.split(',')
-    df_sim = df_sim.explode(col_setor)
-    df_sim[col_setor] = df_sim[col_setor].str.strip()
+    df_base[col_setor] = df_base[col_setor].astype(str).str.split(',')
+    df_base = df_base.explode(col_setor)
+    df_base[col_setor] = df_base[col_setor].str.strip()
 
+# 2. Processamento de Datas
 if col_data:
-    df_sim[col_data] = pd.to_datetime(df_sim[col_data], dayfirst=True, errors='coerce')
-    df_sim = df_sim.dropna(subset=[col_data])
-    df_sim["MesAno"] = df_sim[col_data].dt.to_period("M").astype(str)
+    df_base[col_data] = pd.to_datetime(df_base[col_data], dayfirst=True, errors='coerce')
+    df_base = df_base.dropna(subset=[col_data])
+    df_base["MesAno"] = df_base[col_data].dt.to_period("M").astype(str)
 
 # -----------------------------------------------------------
-# INTERFACE DE FILTROS
+# INTERFACE DE FILTROS (USA TODOS OS DADOS DISPONÍVEIS)
 # -----------------------------------------------------------
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    meses = sorted(df_sim["MesAno"].unique(), reverse=True) if "MesAno" in df_sim.columns else []
+    meses = sorted(df_base["MesAno"].unique(), reverse=True) if "MesAno" in df_base.columns else []
     mes_sel = st.selectbox("Selecione o Mês:", ["Todos os Meses"] + meses)
 
 with c2:
-    setores_lista = sorted([s for s in df_sim[col_setor].unique() if s and s.lower() != "nan"]) if col_setor else []
+    setores_lista = sorted([s for s in df_base[col_setor].unique() if s and s.lower() != "nan"]) if col_setor else []
     setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + setores_lista)
 
 with c3:
-    lideres = sorted(df_sim[col_lider].astype(str).dropna().unique().tolist()) if col_lider else []
+    lideres = sorted(df_base[col_lider].astype(str).replace(['nan', 'None'], pd.NA).dropna().unique().tolist()) if col_lider else []
     lider_sel = st.multiselect("Selecione a(s) Liderança(s):", lideres)
 
-# Aplicação dos Filtros
-df_f = df_sim.copy()
+# Aplicar Filtros
+df_f = df_base.copy()
 if mes_sel != "Todos os Meses": df_f = df_f[df_f["MesAno"] == mes_sel]
 if setor_sel != "Todos os Setores": df_f = df_f[df_f[col_setor] == setor_sel]
 if lider_sel: df_f = df_f[df_f[col_lider].astype(str).isin(lider_sel)]
 
 # -----------------------------------------------------------
-# VISUALIZAÇÃO DOS DADOS (GRÁFICO DE BARRAS)
+# FILTRAGEM FINAL PARA O GRÁFICO (APENAS RESPOSTAS "SIM")
 # -----------------------------------------------------------
+# Agora filtramos para o gráfico apenas quem realmente está com dor
+df_grafico = df_f[df_f[col_sentindo_dor].astype(str).str.upper().str.contains("SIM")].copy()
+
 st.subheader("📊 Frequência de Queixas por Região Corporal")
 
-if df_f.empty:
-    st.info("Nenhum registro de 'Sim' para dor encontrado com os filtros selecionados.")
+if df_grafico.empty:
+    st.info("Nenhum registro de dor encontrado para os filtros selecionados.")
 else:
-    # Separa múltiplos locais de dor na mesma célula (ex: "Mãos, Punho")
-    df_locais = df_f[col_local_dor].astype(str).str.split(',')
+    # Processa os locais de dor (separa se houver múltiplos na mesma célula)
+    df_locais = df_grafico[col_local_dor].astype(str).str.split(',')
     df_locais = df_locais.explode().str.strip()
     df_contagem = df_locais.value_counts().reset_index()
     df_contagem.columns = ["Região", "Quantidade"]
