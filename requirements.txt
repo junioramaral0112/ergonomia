@@ -1,6 +1,4 @@
 streamlit
 pandas
 plotly
-gspread
-Pillow
 google-generativeai
