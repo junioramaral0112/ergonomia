@@ -1,39 +1,20 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from openai import OpenAI
 
-# 1. CONFIGURAÇÃO DE PÁGINA (Layout Mobile-First)
+# 1. CONFIGURAÇÃO DE PÁGINA (Otimizado para Celular)
 st.set_page_config(
     layout="wide", 
-    page_title="Gestão Ergonômica Inteligente",
+    page_title="Gestão Ergonômica",
     initial_sidebar_state="collapsed"
 )
 
-# 2. CONFIGURAÇÃO DA IA (OPENAI)
-# Se estiver no Streamlit Cloud, use st.secrets["OPENAI_API_KEY"] para mais segurança
-client = OpenAI(api_key="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")
-
-def obter_sugestao_chatgpt(setor, regiao, qtd):
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Você é um perito em Ergonomia e SST (NR-17)."},
-                {"role": "user", "content": f"No setor {setor}, houve {qtd} queixas na região corporal {regiao}. Forneça 3 recomendações técnicas práticas e curtas baseadas na NR-17."}
-            ],
-            max_tokens=200
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"IA temporariamente indisponível. (Log: {str(e)[:40]}...)"
-
-# Estilização Profissional
+# Estilo Visual Profissional
 st.markdown("""
     <style>
-        .stMetric { background-color: #ffffff; border: 1px solid #eee; padding: 10px; border-radius: 10px; }
-        .ia-card { background-color: #f0fff4; border-left: 5px solid #28a745; padding: 15px; border-radius: 8px; margin: 10px 0; font-family: sans-serif; }
+        .stMetric { background-color: #ffffff; border: 1px solid #eee; padding: 10px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .footer { text-align: center; color: #666; font-size: 12px; margin-top: 50px; border-top: 1px solid #eee; padding: 20px; }
+        .main { background-color: #f9f9f9; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -43,77 +24,102 @@ def load_data():
         sheet_id = "1du_b9wsAlgvhrjyY0ts9x3Js_4FWDbWujRvi6PKMGEQ"
         url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
         df = pd.read_csv(url)
+        # Limpeza básica de nomes de colunas
         df.columns = [str(c).strip() for c in df.columns]
         return df
     except:
         return pd.DataFrame()
 
 df_raw = load_data()
-if df_raw.empty: st.stop()
 
-# --- MAPEAMENTO SEGURO ---
+if df_raw.empty:
+    st.error("Erro ao carregar os dados da planilha. Verifique a conexão.")
+    st.stop()
+
+# --- MAPEAMENTO SEGURO POR POSIÇÃO ---
 df_base = df_raw.copy()
-c_data, c_dor, c_local, c_lider, c_setor = df_base.columns[0], df_base.columns[4], df_base.columns[5], df_base.columns[7], df_base.columns[10]
+c_data = df_base.columns[0]   # Carimbo de data/hora
+c_dor = df_base.columns[4]    # Sentindo dor? (Coluna E)
+c_local = df_base.columns[5]  # Local da dor (Coluna F)
+c_lider = df_base.columns[7]  # Liderança (Coluna H)
+c_setor = df_base.columns[10] # Setor (Coluna K)
 
 # Tratamento de Data (Garante 2025 e 2026)
 df_base[c_data] = pd.to_datetime(df_base[c_data], dayfirst=True, errors='coerce')
 df_base = df_base.dropna(subset=[c_data])
 df_base["MesAno"] = df_base[c_data].dt.strftime('%Y-%m')
 
-# --- FILTROS (SIDEBAR) ---
-st.sidebar.header("🔍 Filtros")
+# --- FILTROS NA SIDEBAR (GANHA ESPAÇO NO CELULAR) ---
+st.sidebar.header("🔍 Painel de Filtros")
 
-mes_sel = st.sidebar.selectbox("Mês:", ["Todos"] + sorted(df_base["MesAno"].unique().tolist(), reverse=True))
+# Filtro Meses
+meses = sorted(df_base["MesAno"].unique().tolist(), reverse=True)
+mes_sel = st.sidebar.selectbox("Selecione o Mês:", ["Todos"] + meses)
 
+# Filtro Setores (Tratando células com múltiplos setores)
 df_base[c_setor] = df_base[c_setor].astype(str).str.strip().replace(['nan', 'None'], 'Geral')
 lista_setores = sorted(list(set([x.strip() for s in df_base[c_setor].unique() for x in str(s).split(',') if x not in ['Geral', 'nan']])))
-setor_sel = st.sidebar.selectbox("Setor:", ["Todos"] + lista_setores)
+setor_sel = st.sidebar.selectbox("Selecione o Setor:", ["Todos"] + lista_setores)
 
-# Filtro de Liderança (Douglas, Flavio, etc.)
+# Filtro de Liderança ( Douglas, Flavio, Leonel, etc.)
 lideres_lista = sorted([str(l).strip() for l in df_base[c_lider].unique() if str(l).lower() != 'nan' and str(l).strip() != ''])
-lider_sel = st.sidebar.multiselect("Liderança:", lideres_lista)
+lider_sel = st.sidebar.multiselect("Filtrar Liderança:", lideres_lista)
 
-# Aplicação dos Filtros
+# --- APLICAÇÃO DOS FILTROS ---
 df_f = df_base.copy()
-if mes_sel != "Todos": df_f = df_f[df_f["MesAno"] == mes_sel]
-if setor_sel != "Todos": df_f = df_f[df_f[c_setor].str.contains(setor_sel, na=False)]
-if lider_sel: df_f = df_f[df_f[c_lider].astype(str).str.strip().isin(lider_sel)]
+if mes_sel != "Todos": 
+    df_f = df_f[df_f["MesAno"] == mes_sel]
+if setor_sel != "Todos": 
+    df_f = df_f[df_f[c_setor].str.contains(setor_sel, na=False)]
+if lider_sel:
+    df_f = df_f[df_f[c_lider].astype(str).str.strip().isin(lider_sel)]
 
-# --- DASHBOARD ---
-st.title("🧍‍♂️ Ergonomia Inteligente")
+# --- DASHBOARD PRINCIPAL ---
+st.title("🧍‍♂️ Monitoramento Ergonômico")
+st.caption(f"Análise: {setor_sel} | {mes_sel}")
 
+# KPIs Responsivos
 k1, k2 = st.columns(2)
-total = len(df_f)
+total_avaliados = len(df_f)
 df_sim = df_f[df_f[c_dor].astype(str).str.upper().str.contains("SIM")].copy()
-taxa = (len(df_sim) / total * 100) if total > 0 else 0
-k1.metric("Amostragem", total)
-k2.metric("Índice de Queixas", f"{taxa:.1f}%")
+total_queixas = len(df_sim)
+taxa_incidencia = (total_queixas / total_avaliados * 100) if total_avaliados > 0 else 0
+
+k1.metric("Total de Avaliados", f"{total_avaliados}")
+k2.metric("Índice de Queixas", f"{taxa_incidencia:.1f}%")
 
 st.markdown("---")
 
 if not df_sim.empty:
-    # Contagem de Regiões
+    # Processamento para o Gráfico de Regiões
     df_locais = df_sim[c_local].astype(str).str.split(',').explode().str.strip()
     df_contagem = df_locais.value_counts().reset_index()
-    df_contagem.columns = ["Região", "Qtd"]
+    df_contagem.columns = ["Região", "Quantidade"]
+    # Limpeza de nulos no gráfico
     df_contagem = df_contagem[df_contagem["Região"].astype(str).str.lower() != "nan"]
-    
-    # Bloco da IA (ChatGPT)
-    st.subheader("🤖 Recomendação Técnica (IA)")
-    reg_topo = df_contagem.iloc[0]["Região"]
-    qtd_topo = df_contagem.iloc[0]["Qtd"]
-    
-    with st.spinner("ChatGPT analisando dados..."):
-        sugestao = obter_sugestao_chatgpt(setor_sel, reg_topo, qtd_topo)
-        st.markdown(f'<div class="ia-card">{sugestao}</div>', unsafe_allow_html=True)
 
-    # Gráfico responsivo
-    fig = px.bar(df_contagem.sort_values("Qtd", ascending=True), 
-                 x="Qtd", y="Região", orientation='h', text="Qtd", color="Qtd", 
-                 color_continuous_scale="Reds")
-    fig.update_layout(height=450, margin=dict(l=0, r=10, t=10, b=10), showlegend=False)
-    st.plotly_chart(fig, use_container_width=True)
+    st.subheader("Mapa de Queixas por Região")
+    
+    fig = px.bar(
+        df_contagem.sort_values("Quantidade", ascending=True), 
+        x="Quantidade", y="Região", orientation='h', text="Quantidade",
+        color="Quantidade", color_continuous_scale="Reds",
+        template="plotly_white"
+    )
+    
+    fig.update_layout(
+        height=550, 
+        margin=dict(l=0, r=20, t=10, b=10), 
+        showlegend=False,
+        font=dict(size=13)
+    )
+    
+    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+    with st.expander("📊 Ver Dados Detalhados"):
+        st.dataframe(df_contagem.sort_values("Quantidade", ascending=False), hide_index=True, use_container_width=True)
 else:
-    st.info("Nenhum registro crítico encontrado.")
+    st.info("Nenhum registro de desconforto encontrado para os filtros aplicados.")
 
-st.markdown(f'<div class="footer">© 2026 Gestão Ergonômica | Desenvolvido por <b>Dilceu Junior</b></div>', unsafe_allow_html=True)
+# RODAPÉ
+st.markdown(f'<div class="footer">© 2026 Gestão Ergonômica Inteligente | Desenvolvido por <b>Dilceu Junior</b><br>Técnico em Segurança do Trabalho</div>', unsafe_allow_html=True)
