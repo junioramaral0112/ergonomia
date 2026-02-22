@@ -10,29 +10,31 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Configuração da IA (Sua chave direta)
-genai.configure(api_key="AIzaSyCJ72jm7JfJKINgV9SjEALYdTwEGlM3FMU")
-model = genai.GenerativeModel('gemini-1.5-flash')
+# 2. CONFIGURAÇÃO DA IA (Corrigido para evitar Error 404)
+API_KEY = "AIzaSyCJ72jm7JfJKINgV9SjEALYdTwEGlM3FMU"
+genai.configure(api_key=API_KEY)
 
 def obter_sugestao_ia(setor, regiao, qtd):
-    # Prompt mais robusto
-    prompt = f"""
-    Como especialista em SST e Ergonomia (NR-17), analise:
-    No setor {setor}, há {qtd} queixas na região {regiao}.
-    Dê 3 recomendações técnicas curtas e profissionais.
-    """
     try:
+        # Nome do modelo atualizado para evitar erro 404
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        
+        prompt = f"""
+        Você é um perito em Ergonomia e SST (NR-17). 
+        Analise: Setor {setor}, {qtd} queixas de dor na região corporal {regiao}.
+        Dê 3 recomendações técnicas curtas e práticas para o Técnico de Segurança.
+        """
+        
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        # Se der erro, mostra o motivo para podermos diagnosticar
-        return f"IA indisponível no momento. (Log: {str(e)[:50]}...)"
+        return f"IA temporariamente em manutenção. Erro: {str(e)[:40]}..."
 
-# Estilo
+# Estilo Personalizado
 st.markdown("""
     <style>
         .stMetric { background-color: #ffffff; border: 1px solid #eee; padding: 10px; border-radius: 10px; }
-        .ia-card { background-color: #f0f7ff; border-left: 5px solid #007bff; padding: 15px; border-radius: 8px; margin: 10px 0; }
+        .ia-card { background-color: #f0f7ff; border-left: 5px solid #007bff; padding: 15px; border-radius: 8px; margin: 10px 0; font-size: 14px; }
         .footer { text-align: center; color: #666; font-size: 12px; margin-top: 50px; border-top: 1px solid #eee; padding: 20px; }
     </style>
 """, unsafe_allow_html=True)
@@ -56,7 +58,7 @@ df_base = df_raw.copy()
 c_data = df_base.columns[0]   # Coluna A
 c_dor = df_base.columns[4]    # Coluna E
 c_local = df_base.columns[5]  # Coluna F
-c_lider = df_base.columns[7]  # Coluna H (Liderança)
+c_lider = df_base.columns[7]  # Coluna H
 c_setor = df_base.columns[10] # Coluna K
 
 # Tratamento de Data
@@ -64,39 +66,39 @@ df_base[c_data] = pd.to_datetime(df_base[c_data], dayfirst=True, errors='coerce'
 df_base = df_base.dropna(subset=[c_data])
 df_base["MesAno"] = df_base[c_data].dt.strftime('%Y-%m')
 
-# --- FILTROS NA SIDEBAR ---
+# --- FILTROS (SIDEBAR) ---
 st.sidebar.header("🔍 Filtros")
 
-# Filtro Meses
 meses = sorted(df_base["MesAno"].unique().tolist(), reverse=True)
-mes_sel = st.sidebar.selectbox("Período:", ["Todos"] + meses)
+mes_sel = st.sidebar.selectbox("Mês:", ["Todos"] + meses)
 
-# Filtro Setores
+# Limpeza e separação de setores
 df_base[c_setor] = df_base[c_setor].astype(str).str.strip().replace(['nan', 'None'], 'Geral')
-lista_setores = sorted(list(set([x.strip() for s in df_base[c_setor].unique() for x in str(s).split(',') if x != 'Geral'])))
+lista_setores = sorted(list(set([x.strip() for s in df_base[c_setor].unique() for x in str(s).split(',') if x != 'Geral' and x != 'nan'])))
 setor_sel = st.sidebar.selectbox("Setor:", ["Todos"] + lista_setores)
 
-# NOVO: Filtro de Liderança Restaurado
-lideres_lista = sorted([str(l) for l in df_base[c_lider].unique() if str(l).lower() != 'nan'])
+# FILTRO DE LIDERANÇA (Corrigido para não sumir)
+lideres_lista = sorted([str(l).strip() for l in df_base[c_lider].unique() if str(l).lower() != 'nan' and str(l).strip() != ''])
 lider_sel = st.sidebar.multiselect("Liderança:", lideres_lista)
 
-# --- APLICAÇÃO DE FILTROS ---
+# --- APLICAÇÃO DOS FILTROS ---
 df_f = df_base.copy()
 if mes_sel != "Todos": 
     df_f = df_f[df_f["MesAno"] == mes_sel]
 if setor_sel != "Todos": 
     df_f = df_f[df_f[c_setor].str.contains(setor_sel, na=False)]
 if lider_sel:
-    df_f = df_f[df_f[c_lider].astype(str).isin(lider_sel)]
+    df_f = df_f[df_f[c_lider].astype(str).str.strip().isin(lider_sel)]
 
-# --- LAYOUT ---
+# --- DASHBOARD ---
 st.title("🧍‍♂️ Ergonomia Inteligente")
 
 k1, k2 = st.columns(2)
 total = len(df_f)
 df_sim = df_f[df_f[c_dor].astype(str).str.upper().str.contains("SIM")].copy()
 taxa = (len(df_sim) / total * 100) if total > 0 else 0
-k1.metric("Avaliações", total)
+
+k1.metric("Amostragem", total)
 k2.metric("Índice de Queixas", f"{taxa:.1f}%")
 
 st.markdown("---")
@@ -105,16 +107,19 @@ if not df_sim.empty:
     df_locais = df_sim[c_local].astype(str).str.split(',').explode().str.strip()
     df_contagem = df_locais.value_counts().reset_index()
     df_contagem.columns = ["Região", "Qtd"]
-    df_contagem = df_contagem[df_contagem["Região"].astype(str).str.lower() != "nan"]
+    # Limpeza de nomes sujos para o gráfico não travar
+    df_contagem["Região"] = df_contagem["Região"].astype(str).replace('nan', 'Não informado')
+    df_contagem = df_contagem[df_contagem["Região"] != 'Não informado']
     
     if not df_contagem.empty:
-        reg_topo = df_contagem.iloc[0]["Região"]
-        qtd_topo = df_contagem.iloc[0]["Qtd"]
+        reg_critica = df_contagem.iloc[0]["Região"]
+        qtd_critica = df_contagem.iloc[0]["Qtd"]
 
-        # IA Dinâmica
+        # Bloco da IA (Corrigido)
         st.subheader("🤖 Sugestão Técnica da IA")
-        with st.container():
-            st.markdown(f'<div class="ia-card">{obter_sugestao_ia(setor_sel, reg_topo, qtd_topo)}</div>', unsafe_allow_html=True)
+        with st.spinner("Gerando recomendações..."):
+            texto_ia = obter_sugestao_ia(setor_sel, reg_critica, qtd_critica)
+            st.markdown(f'<div class="ia-card">{texto_ia}</div>', unsafe_allow_html=True)
 
         # Gráfico
         fig = px.bar(df_contagem.sort_values("Qtd", ascending=True), 
@@ -123,6 +128,6 @@ if not df_sim.empty:
         fig.update_layout(height=450, margin=dict(l=0, r=10, t=10, b=10), showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("Nenhum registro encontrado para estes filtros.")
+    st.info("Nenhum registro crítico encontrado para os filtros atuais.")
 
 st.markdown(f'<div class="footer">© 2026 Gestão Ergonômica | Desenvolvido por <b>Dilceu Junior</b></div>', unsafe_allow_html=True)
