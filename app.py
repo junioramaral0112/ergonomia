@@ -7,17 +7,17 @@ import plotly.express as px
 # -----------------------------------------------------------
 st.set_page_config(
     layout="wide",
-    page_title="Monitoramento Ergonômico",
-    initial_sidebar_state="collapsed"
+    page_title="Gestão Ergonômica Inteligente",
+    initial_sidebar_state="expanded"
 )
 
-st.title("🧍‍♂️ Monitoramento Ergonômico")
-
-# Estilo para limpar a interface
+# Estilização Personalizada
 st.markdown("""
     <style>
-        [data-testid="stSidebarNav"] {display: none;}
-        [data-testid="collapsedControl"] {display: none;}
+        .main { background-color: #f8f9fa; }
+        .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        footer { visibility: hidden; }
+        .footer-text { text-align: center; color: #6c757d; padding: 20px; font-size: 14px; border-top: 1px solid #dee2e6; margin-top: 50px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -32,133 +32,113 @@ def load_data():
         df = pd.read_csv(url)
         return df
     except Exception as e:
-        st.error(f"Erro ao ler a planilha: {e}")
+        st.error(f"Erro na conexão: {e}")
         return pd.DataFrame()
 
 df_original = load_data()
 
 if df_original.empty:
-    st.warning("Aguardando carregamento dos dados...")
+    st.warning("Aguardando carregamento dos dados da planilha...")
     st.stop()
 
 # -----------------------------------------------------------
-# IDENTIFICAÇÃO DINÂMICA DE COLUNAS
+# PROCESSAMENTO DE DADOS
 # -----------------------------------------------------------
 colunas = df_original.columns.tolist()
+col_data = colunas[0]
+col_sentindo_dor = colunas[4]
+col_local_dor = colunas[5]
+coluna_lider = next((c for c in colunas if "liderança" in c.lower()), colunas[7])
+coluna_setor = next((c for c in colunas if "setor" in c.lower().replace(":", "").strip()), colunas[10])
 
-# Define as colunas baseadas na estrutura da sua planilha
-col_sentindo_dor = colunas[4]  # Coluna E
-col_local_dor = colunas[5]     # Coluna F
+# Tratamento de Data
+df_original[col_data] = pd.to_datetime(df_original[col_data], dayfirst=True, errors='coerce')
+df_original = df_original.dropna(subset=[col_data])
+df_original["MesAno"] = df_original[col_data].dt.strftime('%Y-%m')
 
-coluna_setor = next(
-    (c for c in colunas if "setor" in c.lower().replace(":", "").strip()),
-    None
-)
-
-# FORÇADO: Usa sempre a Coluna A (Carimbo de data/hora) para pegar 2025 e 2026
-coluna_data_selecionada = colunas[0] 
-
-coluna_lider = next(
-    (c for c in colunas if "liderança" in c.lower()),
-    None
-)
-
-# -----------------------------------------------------------
-# TRATAMENTO DE DATA (FOCO NA COLUNA A - HISTÓRICO COMPLETO)
-# -----------------------------------------------------------
-# Converte a Coluna A para formato de data, tratando erros para não quebrar o app
-df_original[coluna_data_selecionada] = pd.to_datetime(
-    df_original[coluna_data_selecionada], 
-    dayfirst=True, 
-    errors='coerce'
-)
-
-# Remove apenas linhas onde a data seja impossível de identificar
-df_original = df_original.dropna(subset=[coluna_data_selecionada])
-
-# Cria a coluna MesAno para os filtros (Ex: 2025-11, 2026-02)
-df_original["MesAno"] = df_original[coluna_data_selecionada].dt.strftime('%Y-%m')
+# Tratamento de Setores (Explosão para filtros individuais)
+df_original[coluna_setor] = df_original[coluna_setor].astype(str).str.strip()
+df_setores = df_original.copy()
+df_setores[coluna_setor] = df_setores[coluna_setor].str.split(",")
+df_setores = df_setores.explode(coluna_setor)
+df_setores[coluna_setor] = df_setores[coluna_setor].str.strip()
 
 # -----------------------------------------------------------
-# LIMPEZA E NORMALIZAÇÃO DOS SETORES
+# FILTROS NA BARRA LATERAL (SIDEBAR)
 # -----------------------------------------------------------
-if coluna_setor:
-    df_original[coluna_setor] = df_original[coluna_setor].astype(str).str.strip()
-    df_original[coluna_setor] = df_original[coluna_setor].replace(['nan', 'None', ''], pd.NA)
-    
-    # Separa múltiplos setores na mesma célula
-    df_original[coluna_setor] = df_original[coluna_setor].str.split(",")
-    df_original = df_original.explode(coluna_setor)
-    df_original[coluna_setor] = df_original[coluna_setor].str.strip()
+st.sidebar.header("🔍 Painel de Filtros")
 
-# -----------------------------------------------------------
-# FILTROS
-# -----------------------------------------------------------
-c1, c2, c3 = st.columns(3)
+meses = sorted(df_original["MesAno"].unique().tolist(), reverse=True)
+mes_sel = st.sidebar.selectbox("Período de Análise:", ["Histórico Completo"] + meses)
 
-with c1:
-    # Captura todos os meses de 2025 e 2026 presentes na Coluna A
-    meses = sorted(df_original["MesAno"].unique().tolist(), reverse=True)
-    mes_sel = st.selectbox("Selecione o Mês:", ["Todos os Meses"] + meses)
+setores_lista = sorted([s for s in df_setores[coluna_setor].unique() if str(s).lower() != 'nan' and s != 'Não Informado'])
+setor_sel = st.sidebar.selectbox("Setor de Atuação:", ["Todos os Setores"] + setores_lista)
 
-with c2:
-    if coluna_setor:
-        setores_lista = sorted(df_original[coluna_setor].dropna().unique().tolist())
-    else:
-        setores_lista = []
-    setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + setores_lista)
+lideres = sorted([l for l in df_original[coluna_lider].astype(str).unique() if l.lower() != 'nan'])
+lider_sel = st.sidebar.multiselect("Filtrar por Liderança:", lideres)
 
-with c3:
-    if coluna_lider:
-        lideres = sorted(df_original[coluna_lider].astype(str).replace(['nan', 'None', ''], pd.NA).dropna().unique().tolist())
-    else:
-        lideres = []
-    lider_sel = st.multiselect("Selecione a(s) Liderança(s):", lideres)
-
-# -----------------------------------------------------------
-# APLICAÇÃO DOS FILTROS
-# -----------------------------------------------------------
-df_f = df_original.copy()
-
-if mes_sel != "Todos os Meses":
+# Aplicação dos Filtros
+df_f = df_setores.copy()
+if mes_sel != "Histórico Completo":
     df_f = df_f[df_f["MesAno"] == mes_sel]
-
-if setor_sel != "Todos os Setores" and coluna_setor:
+if setor_sel != "Todos os Setores":
     df_f = df_f[df_f[coluna_setor] == setor_sel]
-
-if lider_sel and coluna_lider:
+if lider_sel:
     df_f = df_f[df_f[coluna_lider].astype(str).isin(lider_sel)]
 
 # -----------------------------------------------------------
-# GRÁFICO (REGRAS: APENAS RESPOSTAS "SIM" PARA DOR)
+# KPIs - INDICADORES DE IMPACTO
 # -----------------------------------------------------------
-st.subheader(f"📊 Queixas por Região - {setor_sel}")
+st.title("🧍‍♂️ Monitoramento Ergonômico")
+st.markdown("---")
 
-# Filtra apenas quem respondeu "Sim" na coluna E
-df_sim = df_f[df_f[col_sentindo_dor].astype(str).str.upper().str.contains("SIM")].copy()
+total_respostas = len(df_f)
+df_dor_sim = df_f[df_f[col_sentindo_dor].astype(str).str.upper().str.contains("SIM")]
+total_queixas = len(df_dor_sim)
+percentual_dor = (total_queixas / total_respostas * 100) if total_respostas > 0 else 0
 
-if df_sim.empty:
-    st.info("Nenhum registro de dor encontrado para os filtros selecionados.")
+kpi1, kpi2, kpi3 = st.columns(3)
+kpi1.metric("Total de Avaliados", f"{total_respostas} colaboradores")
+kpi2.metric("Casos com Desconforto", f"{total_queixas} queixas", delta_color="inverse")
+kpi3.metric("Índice de Queixas (%)", f"{percentual_dor:.1f}%", delta_color="inverse")
+
+st.markdown("---")
+
+# -----------------------------------------------------------
+# GRÁFICO E DETALHAMENTO
+# -----------------------------------------------------------
+if df_dor_sim.empty:
+    st.info("Nenhum registro de queixa encontrado para os filtros selecionados.")
 else:
-    # Processa os locais da coluna F
-    df_locais = df_sim[col_local_dor].astype(str).str.split(',')
-    df_locais = df_locais.explode().str.strip()
+    df_locais = df_dor_sim[col_local_dor].astype(str).str.split(',').explode().str.strip()
     df_contagem = df_locais.value_counts().reset_index()
-    df_contagem.columns = ["Região", "Quantidade"]
-    df_contagem = df_contagem[df_contagem["Região"].str.lower() != "nan"]
+    df_contagem.columns = ["Região Corporal", "Quantidade"]
+    df_contagem = df_contagem[df_contagem["Região Corporal"].str.lower() != "nan"]
 
-    col_chart, col_table = st.columns([0.7, 0.3])
+    col_chart, col_table = st.columns([0.6, 0.4])
 
     with col_chart:
+        st.subheader("Análise por Região")
         fig = px.bar(
             df_contagem.sort_values("Quantidade", ascending=True),
-            x="Quantidade", y="Região", orientation='h',
+            x="Quantidade", y="Região Corporal", orientation='h',
             text="Quantidade", color="Quantidade",
-            color_continuous_scale="Reds"
+            color_continuous_scale="Reds", template="plotly_white"
         )
-        fig.update_layout(height=500, margin=dict(l=0, r=0, t=30, b=0), showlegend=False)
+        fig.update_layout(height=600, showlegend=False, font=dict(size=14))
         st.plotly_chart(fig, use_container_width=True)
 
     with col_table:
-        st.write("### Detalhamento")
-        st.dataframe(df_contagem, hide_index=True, use_container_width=True)
+        st.subheader("Tabela de Frequência")
+        st.dataframe(df_contagem.sort_values("Quantidade", ascending=False), 
+                     hide_index=True, use_container_width=True, height=565)
+
+# -----------------------------------------------------------
+# RODAPÉ DE DIREITOS AUTORAIS
+# -----------------------------------------------------------
+st.markdown(f"""
+    <div class="footer-text">
+        © 2026 Gestão Ergonômica Inteligente | Desenvolvido por <b>Dilceu Junior</b><br>
+        Técnico em Segurança do Trabalho - Consultoria de SST
+    </div>
+""", unsafe_allow_html=True)
