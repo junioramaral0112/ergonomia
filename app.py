@@ -1,189 +1,192 @@
 import streamlit as st
 import pandas as pd
-import os
 import plotly.express as px
 
-# =====================================================
-# CONFIGURAÇÃO DA PÁGINA
-# =====================================================
-st.set_page_config(layout="wide")
-st.title("📊 Monitoramento Ergonômico - Dashboard Inteligente")
+# -----------------------------------------------------------
+# CONFIGURAÇÃO DE PÁGINA
+# -----------------------------------------------------------
+st.set_page_config(
+    layout="wide",
+    page_title="Monitoramento Ergonômico",
+    initial_sidebar_state="collapsed"
+)
 
-# =====================================================
-# LOAD DE DADOS (ROBUSTO)
-# =====================================================
-@st.cache_data
+st.title("🧍‍♂️ Monitoramento Ergonômico")
+
+st.markdown("""
+    <style>
+        [data-testid="stSidebarNav"] {display: none;}
+        [data-testid="collapsedControl"] {display: none;}
+    </style>
+""", unsafe_allow_html=True)
+
+# -----------------------------------------------------------
+# CARREGAMENTO DOS DADOS
+# -----------------------------------------------------------
+@st.cache_data(ttl=60)
 def load_data():
-    file_path = "dados.xlsx"
-
-    # Tenta carregar automático
-    if os.path.exists(file_path):
-        df = pd.read_excel(file_path)
-        st.success("📁 Dados carregados automaticamente")
+    try:
+        sheet_id = "1du_b9wsAlgvhrjyY0ts9x3Js_4FWDbWujRvi6PKMGEQ"
+        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+        df = pd.read_csv(url)
         return df
+    except Exception as e:
+        st.error(f"Erro ao ler a planilha: {e}")
+        return pd.DataFrame()
 
-    # Upload manual
-    uploaded_file = st.file_uploader("📤 Envie o arquivo Excel", type=["xlsx"])
+df_original = load_data()
 
-    if uploaded_file is not None:
-        df = pd.read_excel(uploaded_file)
-        st.success("✅ Arquivo carregado com sucesso")
-        return df
-
-    st.warning("⚠️ Envie um arquivo para continuar.")
+if df_original.empty:
+    st.warning("Aguardando carregamento dos dados...")
     st.stop()
 
-df = load_data()
+# -----------------------------------------------------------
+# IDENTIFICAÇÃO DINÂMICA DE COLUNAS
+# -----------------------------------------------------------
+colunas = df_original.columns.tolist()
 
-# =====================================================
-# LIMPEZA DE DADOS (PADRÃO EMPRESA)
-# =====================================================
-df.columns = df.columns.str.strip()
+coluna_setor = next(
+    (c for c in colunas if "setor" in c.lower().replace(":", "").strip()),
+    None
+)
 
-# Padroniza nomes (ajuste conforme seu Excel)
-colunas_necessarias = ["Data", "Setor", "Lideranca", "Parte do Corpo"]
+coluna_data = next(
+    (c for c in colunas if "carimbo" in c.lower() or "data" in c.lower()),
+    None
+)
 
-for col in colunas_necessarias:
-    if col not in df.columns:
-        st.error(f"❌ Coluna obrigatória não encontrada: {col}")
-        st.stop()
+coluna_dor = next(
+    (c for c in colunas if "local da dor" in c.lower() or "indique o local" in c.lower()),
+    None
+)
 
-# Trata datas
-df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+coluna_lider = next(
+    (c for c in colunas if "liderança" in c.lower()),
+    None
+)
 
-# Remove lixo
-df = df.dropna(subset=["Data"])
+# -----------------------------------------------------------
+# LIMPEZA DOS SETORES
+# -----------------------------------------------------------
+if coluna_setor:
+    df_original[coluna_setor] = (
+        df_original[coluna_setor]
+        .astype(str)
+        .str.replace("\xa0", " ", regex=False)
+        .str.strip()
+    )
 
-# Cria coluna de mês
-df["Mes"] = df["Data"].dt.to_period("M").astype(str)
+    df_original[coluna_setor] = df_original[coluna_setor].replace(
+        ['nan', 'None', '', 'NaN'],
+        pd.NA
+    )
 
-# Remove valores vazios importantes
-df["Setor"] = df["Setor"].fillna("Não informado").str.strip()
-df["Lideranca"] = df["Lideranca"].fillna("Não informado").str.strip()
-df["Parte do Corpo"] = df["Parte do Corpo"].fillna("Não informado").str.strip()
+    df_original = df_original.dropna(subset=[coluna_setor])
 
-# =====================================================
-# FILTROS (TOPO)
-# =====================================================
-col1, col2, col3 = st.columns(3)
+    df_original[coluna_setor] = df_original[coluna_setor].str.split(",")
+    df_original = df_original.explode(coluna_setor)
+    df_original[coluna_setor] = df_original[coluna_setor].str.strip()
 
-with col1:
-    meses = sorted(df["Mes"].dropna().unique(), reverse=True)
-    mes_sel = st.selectbox("📅 Selecione o Mês", meses)
+# -----------------------------------------------------------
+# DATA
+# -----------------------------------------------------------
+if coluna_data:
+    df_original[coluna_data] = pd.to_datetime(
+        df_original[coluna_data],
+        dayfirst=True,
+        errors='coerce'
+    )
 
-with col2:
-    setores = sorted(df["Setor"].dropna().unique())
-    setor_sel = st.selectbox("🏭 Selecione o Setor", setores)
+    df_original = df_original.dropna(subset=[coluna_data])
+    df_original["MesAno"] = df_original[coluna_data].dt.to_period("M").astype(str)
 
-with col3:
-    lideres = sorted(df["Lideranca"].dropna().unique())
-    lider_sel = st.multiselect("👔 Liderança", lideres)
+# -----------------------------------------------------------
+# FILTROS
+# -----------------------------------------------------------
+c1, c2, c3 = st.columns(3)
 
-# =====================================================
+with c1:
+    meses = sorted(df_original["MesAno"].unique(), reverse=True) if "MesAno" in df_original.columns else []
+    mes_sel = st.selectbox("Selecione o Mês:", ["Todos os Meses"] + meses)
+
+with c2:
+    setores_lista = sorted(df_original[coluna_setor].dropna().unique()) if coluna_setor else []
+    setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + list(setores_lista))
+
+with c3:
+    lideres = (
+        df_original[coluna_lider]
+        .astype(str)
+        .replace(['nan', 'None', ''], pd.NA)
+        .dropna()
+        .unique()
+    ) if coluna_lider else []
+
+    lider_sel = st.multiselect("Selecione a(s) Liderança(s):", sorted(lideres))
+
+# -----------------------------------------------------------
 # FILTRAGEM
-# =====================================================
-df_filtrado = df[df["Mes"] == mes_sel]
-df_filtrado = df_filtrado[df_filtrado["Setor"] == setor_sel]
+# -----------------------------------------------------------
+df_f = df_original.copy()
 
-if lider_sel:
-    df_filtrado = df_filtrado[df_filtrado["Lideranca"].isin(lider_sel)]
+if mes_sel != "Todos os Meses":
+    df_f = df_f[df_f["MesAno"] == mes_sel]
 
-# =====================================================
-# KPIs (VISÃO EMPRESA)
-# =====================================================
-st.divider()
+if setor_sel != "Todos os Setores" and coluna_setor:
+    df_f = df_f[df_f[coluna_setor] == setor_sel]
 
-k1, k2, k3 = st.columns(3)
+if lider_sel and coluna_lider:
+    df_f = df_f[df_f[coluna_lider].astype(str).isin(lider_sel)]
 
-k1.metric("Total de Registros", len(df_filtrado))
-k2.metric("Colaboradores Únicos", df_filtrado["Lideranca"].nunique())
-k3.metric("Setor Atual", setor_sel)
+if df_f.empty:
+    st.info("Nenhum dado encontrado para os filtros selecionados.")
+    st.stop()
 
-# =====================================================
-# GRÁFICOS PRINCIPAIS
-# =====================================================
-st.divider()
+# -----------------------------------------------------------
+# CONTAGEM DAS DORES
+# -----------------------------------------------------------
+if coluna_dor:
+    df_dores = df_f[coluna_dor].astype(str).str.get_dummies(sep=",")
+    df_dores.columns = df_dores.columns.str.strip()
 
-col1, col2 = st.columns(2)
+    df_contagem = (
+        df_dores.sum()
+        .reset_index()
+        .rename(columns={"index": "Parte", 0: "Qtd"})
+    )
+else:
+    st.warning("Coluna de dor não encontrada.")
+    st.stop()
 
-# 🔹 Frequência por Parte do Corpo
+# -----------------------------------------------------------
+# LAYOUT COM GRÁFICO + TABELA
+# -----------------------------------------------------------
+col1, col2 = st.columns([0.6, 0.4])
+
 with col1:
-    freq = (
-        df_filtrado["Parte do Corpo"]
-        .value_counts()
-        .reset_index()
-    )
-    freq.columns = ["Parte do Corpo", "Quantidade"]
+    df_plot = df_contagem[df_contagem["Qtd"] > 0].sort_values("Qtd", ascending=True)
 
-    fig1 = px.bar(
-        freq,
-        x="Quantidade",
-        y="Parte do Corpo",
+    fig = px.bar(
+        df_plot,
+        x="Qtd",
+        y="Parte",
         orientation="h",
-        title="📊 Frequência por Parte do Corpo",
-        text="Quantidade"
+        text="Qtd",
+        title="📊 Frequência de Dores por Região do Corpo"
     )
 
-    fig1.update_layout(yaxis={'categoryorder':'total ascending'})
-    st.plotly_chart(fig1, use_container_width=True)
+    fig.update_layout(
+        height=650,
+        yaxis=dict(categoryorder='total ascending')
+    )
 
-# 🔹 Ocorrências por Liderança
+    st.plotly_chart(fig, use_container_width=True)
+
 with col2:
-    lider = (
-        df_filtrado["Lideranca"]
-        .value_counts()
-        .reset_index()
+    st.subheader("📊 Frequência por Local")
+
+    st.dataframe(
+        df_contagem.sort_values("Qtd", ascending=False),
+        hide_index=True,
+        use_container_width=True
     )
-    lider.columns = ["Liderança", "Quantidade"]
-
-    fig2 = px.bar(
-        lider,
-        x="Liderança",
-        y="Quantidade",
-        title="👔 Ocorrências por Liderança",
-        text="Quantidade"
-    )
-
-    st.plotly_chart(fig2, use_container_width=True)
-
-# =====================================================
-# EVOLUÇÃO TEMPORAL
-# =====================================================
-st.divider()
-
-evolucao = (
-    df_filtrado
-    .groupby("Data")
-    .size()
-    .reset_index(name="Quantidade")
-)
-
-fig3 = px.line(
-    evolucao,
-    x="Data",
-    y="Quantidade",
-    title="📈 Evolução das Ocorrências"
-)
-
-st.plotly_chart(fig3, use_container_width=True)
-
-# =====================================================
-# TABELA DETALHADA
-# =====================================================
-st.divider()
-
-st.subheader("📋 Dados Detalhados")
-
-st.dataframe(
-    df_filtrado.sort_values(by="Data", ascending=False),
-    use_container_width=True
-)
-
-# =====================================================
-# EXPORTAÇÃO
-# =====================================================
-st.download_button(
-    "⬇️ Baixar Dados Filtrados",
-    df_filtrado.to_csv(index=False),
-    file_name="dados_filtrados.csv"
-)
