@@ -13,6 +13,7 @@ st.set_page_config(
 
 st.title("🧍‍♂️ Monitoramento Ergonômico")
 
+# Estilo para limpar a interface
 st.markdown("""
     <style>
         [data-testid="stSidebarNav"] {display: none;}
@@ -45,6 +46,7 @@ if df_original.empty:
 # -----------------------------------------------------------
 colunas = df_original.columns.tolist()
 
+# Define as colunas baseadas na estrutura da sua planilha
 col_sentindo_dor = colunas[4]  # Coluna E
 col_local_dor = colunas[5]     # Coluna F
 
@@ -53,8 +55,8 @@ coluna_setor = next(
     None
 )
 
-# AJUSTE: Forçando o uso da Coluna A (Carimbo de data/hora) para todo o histórico
-coluna_data = colunas[0] 
+# FORÇADO: Usa sempre a Coluna A (Carimbo de data/hora) para pegar 2025 e 2026
+coluna_data_selecionada = colunas[0] 
 
 coluna_lider = next(
     (c for c in colunas if "liderança" in c.lower()),
@@ -62,42 +64,32 @@ coluna_lider = next(
 )
 
 # -----------------------------------------------------------
+# TRATAMENTO DE DATA (FOCO NA COLUNA A - HISTÓRICO COMPLETO)
+# -----------------------------------------------------------
+# Converte a Coluna A para formato de data, tratando erros para não quebrar o app
+df_original[coluna_data_selecionada] = pd.to_datetime(
+    df_original[coluna_data_selecionada], 
+    dayfirst=True, 
+    errors='coerce'
+)
+
+# Remove apenas linhas onde a data seja impossível de identificar
+df_original = df_original.dropna(subset=[coluna_data_selecionada])
+
+# Cria a coluna MesAno para os filtros (Ex: 2025-11, 2026-02)
+df_original["MesAno"] = df_original[coluna_data_selecionada].dt.strftime('%Y-%m')
+
+# -----------------------------------------------------------
 # LIMPEZA E NORMALIZAÇÃO DOS SETORES
 # -----------------------------------------------------------
 if coluna_setor:
-    df_original[coluna_setor] = (
-        df_original[coluna_setor]
-        .astype(str)
-        .str.replace("\xa0", " ", regex=False)
-        .str.strip()
-    )
-
-    df_original[coluna_setor] = df_original[coluna_setor].replace(
-        ['nan', 'None', '', 'NaN'],
-        pd.NA
-    )
-
-    df_original = df_original.dropna(subset=[coluna_setor])
+    df_original[coluna_setor] = df_original[coluna_setor].astype(str).str.strip()
+    df_original[coluna_setor] = df_original[coluna_setor].replace(['nan', 'None', ''], pd.NA)
+    
+    # Separa múltiplos setores na mesma célula
     df_original[coluna_setor] = df_original[coluna_setor].str.split(",")
     df_original = df_original.explode(coluna_setor)
     df_original[coluna_setor] = df_original[coluna_setor].str.strip()
-
-# -----------------------------------------------------------
-# TRATAMENTO DE DATA (AJUSTADO PARA LER 2025 DA COLUNA A)
-# -----------------------------------------------------------
-if coluna_data:
-    # Conversão flexível para aceitar formatos variados de 2025 e 2026 na Coluna A
-    df_original[coluna_data] = pd.to_datetime(
-        df_original[coluna_data],
-        dayfirst=True,
-        errors='coerce'
-    )
-
-    # Removemos apenas linhas onde a data seja realmente impossível de converter
-    df_original = df_original.dropna(subset=[coluna_data])
-    
-    # Gera MesAno garantindo que 2025-11, 2025-12, etc, apareçam corretamente
-    df_original["MesAno"] = df_original[coluna_data].dt.strftime('%Y-%m')
 
 # -----------------------------------------------------------
 # FILTROS
@@ -105,24 +97,22 @@ if coluna_data:
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    # Captura todos os MesAno únicos do histórico completo
-    meses = sorted(df_original["MesAno"].unique().tolist(), reverse=True) if "MesAno" in df_original.columns else []
+    # Captura todos os meses de 2025 e 2026 presentes na Coluna A
+    meses = sorted(df_original["MesAno"].unique().tolist(), reverse=True)
     mes_sel = st.selectbox("Selecione o Mês:", ["Todos os Meses"] + meses)
 
 with c2:
     if coluna_setor:
-        setores_lista = sorted(df_original[coluna_setor].dropna().unique())
+        setores_lista = sorted(df_original[coluna_setor].dropna().unique().tolist())
     else:
         setores_lista = []
-
-    setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + list(setores_lista))
+    setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + setores_lista)
 
 with c3:
     if coluna_lider:
-        lideres = sorted(df_original[coluna_lider].astype(str).replace(['nan', 'None', ''], pd.NA).dropna().unique())
+        lideres = sorted(df_original[coluna_lider].astype(str).replace(['nan', 'None', ''], pd.NA).dropna().unique().tolist())
     else:
         lideres = []
-
     lider_sel = st.multiselect("Selecione a(s) Liderança(s):", lideres)
 
 # -----------------------------------------------------------
@@ -139,17 +129,18 @@ if setor_sel != "Todos os Setores" and coluna_setor:
 if lider_sel and coluna_lider:
     df_f = df_f[df_f[coluna_lider].astype(str).isin(lider_sel)]
 
-# REGRA DE SST: Filtrar apenas "Sim" (Coluna E)
-df_sim = df_f[df_f[col_sentindo_dor].astype(str).str.upper().str.contains("SIM")].copy()
-
 # -----------------------------------------------------------
-# CONTAGEM E GRÁFICO
+# GRÁFICO (REGRAS: APENAS RESPOSTAS "SIM" PARA DOR)
 # -----------------------------------------------------------
 st.subheader(f"📊 Queixas por Região - {setor_sel}")
 
+# Filtra apenas quem respondeu "Sim" na coluna E
+df_sim = df_f[df_f[col_sentindo_dor].astype(str).str.upper().str.contains("SIM")].copy()
+
 if df_sim.empty:
-    st.info("Nenhum registro de 'Sim' para dor encontrado para os filtros selecionados.")
+    st.info("Nenhum registro de dor encontrado para os filtros selecionados.")
 else:
+    # Processa os locais da coluna F
     df_locais = df_sim[col_local_dor].astype(str).str.split(',')
     df_locais = df_locais.explode().str.strip()
     df_contagem = df_locais.value_counts().reset_index()
@@ -161,11 +152,8 @@ else:
     with col_chart:
         fig = px.bar(
             df_contagem.sort_values("Quantidade", ascending=True),
-            x="Quantidade",
-            y="Região",
-            orientation='h',
-            text="Quantidade",
-            color="Quantidade",
+            x="Quantidade", y="Região", orientation='h',
+            text="Quantidade", color="Quantidade",
             color_continuous_scale="Reds"
         )
         fig.update_layout(height=500, margin=dict(l=0, r=0, t=30, b=0), showlegend=False)
