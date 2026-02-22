@@ -45,19 +45,16 @@ if df_original.empty:
 # -----------------------------------------------------------
 colunas = df_original.columns.tolist()
 
-# Mapeamento exato baseado na sua estrutura
-col_sentindo_dor = colunas[4]  # Coluna E: "Hoje, você está sentindo..."
-col_local_dor = colunas[5]     # Coluna F: "Se SIM, indique o local..."
+col_sentindo_dor = colunas[4]  # Coluna E
+col_local_dor = colunas[5]     # Coluna F
 
 coluna_setor = next(
     (c for c in colunas if "setor" in c.lower().replace(":", "").strip()),
     None
 )
 
-coluna_data = next(
-    (c for c in colunas if "carimbo" in c.lower() or "data" in c.lower()),
-    None
-)
+# AJUSTE: Forçando o uso da Coluna A (Carimbo de data/hora) para todo o histórico
+coluna_data = colunas[0] 
 
 coluna_lider = next(
     (c for c in colunas if "liderança" in c.lower()),
@@ -81,24 +78,26 @@ if coluna_setor:
     )
 
     df_original = df_original.dropna(subset=[coluna_setor])
-
-    # Separa múltiplos setores em linhas diferentes (Ex: "Laminação, GDR" vira duas entradas)
     df_original[coluna_setor] = df_original[coluna_setor].str.split(",")
     df_original = df_original.explode(coluna_setor)
     df_original[coluna_setor] = df_original[coluna_setor].str.strip()
 
 # -----------------------------------------------------------
-# TRATAMENTO DE DATA
+# TRATAMENTO DE DATA (AJUSTADO PARA LER 2025 DA COLUNA A)
 # -----------------------------------------------------------
 if coluna_data:
+    # Conversão flexível para aceitar formatos variados de 2025 e 2026 na Coluna A
     df_original[coluna_data] = pd.to_datetime(
         df_original[coluna_data],
         dayfirst=True,
         errors='coerce'
     )
 
+    # Removemos apenas linhas onde a data seja realmente impossível de converter
     df_original = df_original.dropna(subset=[coluna_data])
-    df_original["MesAno"] = df_original[coluna_data].dt.to_period("M").astype(str)
+    
+    # Gera MesAno garantindo que 2025-11, 2025-12, etc, apareçam corretamente
+    df_original["MesAno"] = df_original[coluna_data].dt.strftime('%Y-%m')
 
 # -----------------------------------------------------------
 # FILTROS
@@ -106,7 +105,8 @@ if coluna_data:
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    meses = sorted(df_original["MesAno"].unique(), reverse=True) if "MesAno" in df_original.columns else []
+    # Captura todos os MesAno únicos do histórico completo
+    meses = sorted(df_original["MesAno"].unique().tolist(), reverse=True) if "MesAno" in df_original.columns else []
     mes_sel = st.selectbox("Selecione o Mês:", ["Todos os Meses"] + meses)
 
 with c2:
@@ -119,14 +119,7 @@ with c2:
 
 with c3:
     if coluna_lider:
-        lideres = (
-            df_original[coluna_lider]
-            .astype(str)
-            .replace(['nan', 'None', ''], pd.NA)
-            .dropna()
-            .unique()
-        )
-        lideres = sorted(lideres)
+        lideres = sorted(df_original[coluna_lider].astype(str).replace(['nan', 'None', ''], pd.NA).dropna().unique())
     else:
         lideres = []
 
@@ -146,18 +139,17 @@ if setor_sel != "Todos os Setores" and coluna_setor:
 if lider_sel and coluna_lider:
     df_f = df_f[df_f[coluna_lider].astype(str).isin(lider_sel)]
 
-# 🔥 REGRA DE SST: Filtrar apenas quem respondeu "Sim" para dor (Coluna E)
+# REGRA DE SST: Filtrar apenas "Sim" (Coluna E)
 df_sim = df_f[df_f[col_sentindo_dor].astype(str).str.upper().str.contains("SIM")].copy()
 
 # -----------------------------------------------------------
-# CONTAGEM DAS DORES E GRÁFICO
+# CONTAGEM E GRÁFICO
 # -----------------------------------------------------------
 st.subheader(f"📊 Queixas por Região - {setor_sel}")
 
 if df_sim.empty:
     st.info("Nenhum registro de 'Sim' para dor encontrado para os filtros selecionados.")
 else:
-    # Separa múltiplos locais de dor na mesma célula (Coluna F)
     df_locais = df_sim[col_local_dor].astype(str).str.split(',')
     df_locais = df_locais.explode().str.strip()
     df_contagem = df_locais.value_counts().reset_index()
@@ -167,7 +159,6 @@ else:
     col_chart, col_table = st.columns([0.7, 0.3])
 
     with col_chart:
-        # Gráfico de barras horizontal (substituindo o mapa humano)
         fig = px.bar(
             df_contagem.sort_values("Quantidade", ascending=True),
             x="Quantidade",
