@@ -3,102 +3,52 @@ import pandas as pd
 import plotly.express as px
 
 # -----------------------------------------------------------
-# CONFIGURAÇÃO DE PÁGINA
+# CONFIGURAÇÃO
 # -----------------------------------------------------------
-st.set_page_config(
-    layout="wide",
-    page_title="Monitoramento Ergonômico",
-    initial_sidebar_state="collapsed"
-)
+st.set_page_config(layout="wide", page_title="Monitoramento Ergonômico")
 
 st.title("🧍‍♂️ Monitoramento Ergonômico")
 
-st.markdown("""
-    <style>
-        [data-testid="stSidebarNav"] {display: none;}
-        [data-testid="collapsedControl"] {display: none;}
-    </style>
-""", unsafe_allow_html=True)
-
 # -----------------------------------------------------------
-# CARREGAMENTO DOS DADOS
+# CARREGAR DADOS
 # -----------------------------------------------------------
 @st.cache_data(ttl=60)
 def load_data():
-    try:
-        sheet_id = "1du_b9wsAlgvhrjyY0ts9x3Js_4FWDbWujRvi6PKMGEQ"
-        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
-        df = pd.read_csv(url)
-        return df
-    except Exception as e:
-        st.error(f"Erro ao ler a planilha: {e}")
-        return pd.DataFrame()
+    sheet_id = "1du_b9wsAlgvhrjyY0ts9x3Js_4FWDbWujRvi6PKMGEQ"
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    return pd.read_csv(url)
 
-df_original = load_data()
+df = load_data()
 
-if df_original.empty:
-    st.warning("Aguardando carregamento dos dados...")
+if df.empty:
+    st.warning("Sem dados")
     st.stop()
 
 # -----------------------------------------------------------
-# IDENTIFICAÇÃO DINÂMICA DE COLUNAS
+# IDENTIFICAR COLUNAS
 # -----------------------------------------------------------
-colunas = df_original.columns.tolist()
+colunas = df.columns
 
-coluna_setor = next(
-    (c for c in colunas if "setor" in c.lower().replace(":", "").strip()),
-    None
-)
-
-coluna_data = next(
-    (c for c in colunas if "carimbo" in c.lower() or "data" in c.lower()),
-    None
-)
-
-coluna_dor = next(
-    (c for c in colunas if "local da dor" in c.lower() or "indique o local" in c.lower()),
-    None
-)
-
-coluna_lider = next(
-    (c for c in colunas if "liderança" in c.lower()),
-    None
-)
+col_setor = next((c for c in colunas if "setor" in c.lower()), None)
+col_data = next((c for c in colunas if "data" in c.lower()), None)
+col_dor_flag = next((c for c in colunas if "sentindo alguma dor" in c.lower()), None)
+col_local_dor = next((c for c in colunas if "local da dor" in c.lower()), None)
+col_lider = next((c for c in colunas if "liderança" in c.lower()), None)
 
 # -----------------------------------------------------------
-# LIMPEZA DOS SETORES
+# LIMPEZA BASE
 # -----------------------------------------------------------
-if coluna_setor:
-    df_original[coluna_setor] = (
-        df_original[coluna_setor]
-        .astype(str)
-        .str.replace("\xa0", " ", regex=False)
-        .str.strip()
-    )
+df = df.copy()
 
-    df_original[coluna_setor] = df_original[coluna_setor].replace(
-        ['nan', 'None', '', 'NaN'],
-        pd.NA
-    )
+# limpar textos
+for col in [col_setor, col_dor_flag, col_local_dor, col_lider]:
+    if col:
+        df[col] = df[col].astype(str).str.strip()
 
-    df_original = df_original.dropna(subset=[coluna_setor])
-
-    df_original[coluna_setor] = df_original[coluna_setor].str.split(",")
-    df_original = df_original.explode(coluna_setor)
-    df_original[coluna_setor] = df_original[coluna_setor].str.strip()
-
-# -----------------------------------------------------------
-# DATA
-# -----------------------------------------------------------
-if coluna_data:
-    df_original[coluna_data] = pd.to_datetime(
-        df_original[coluna_data],
-        dayfirst=True,
-        errors='coerce'
-    )
-
-    df_original = df_original.dropna(subset=[coluna_data])
-    df_original["MesAno"] = df_original[coluna_data].dt.to_period("M").astype(str)
+# datas
+if col_data:
+    df[col_data] = pd.to_datetime(df[col_data], dayfirst=True, errors='coerce')
+    df["MesAno"] = df[col_data].dt.to_period("M").astype(str)
 
 # -----------------------------------------------------------
 # FILTROS
@@ -106,87 +56,80 @@ if coluna_data:
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    meses = sorted(df_original["MesAno"].unique(), reverse=True) if "MesAno" in df_original.columns else []
-    mes_sel = st.selectbox("Selecione o Mês:", ["Todos os Meses"] + meses)
+    meses = sorted(df["MesAno"].dropna().unique(), reverse=True)
+    mes_sel = st.selectbox("Mês", ["Todos"] + list(meses))
 
 with c2:
-    setores_lista = sorted(df_original[coluna_setor].dropna().unique()) if coluna_setor else []
-    setor_sel = st.selectbox("Selecione o Setor:", ["Todos os Setores"] + list(setores_lista))
+    setores = sorted(df[col_setor].dropna().unique()) if col_setor else []
+    setor_sel = st.selectbox("Setor", ["Todos"] + list(setores))
 
 with c3:
-    lideres = (
-        df_original[coluna_lider]
-        .astype(str)
-        .replace(['nan', 'None', ''], pd.NA)
-        .dropna()
-        .unique()
-    ) if coluna_lider else []
+    lideres = sorted(df[col_lider].dropna().unique()) if col_lider else []
+    lider_sel = st.multiselect("Liderança", lideres)
 
-    lider_sel = st.multiselect("Selecione a(s) Liderança(s):", sorted(lideres))
+# aplicar filtros
+df_f = df.copy()
 
-# -----------------------------------------------------------
-# FILTRAGEM
-# -----------------------------------------------------------
-df_f = df_original.copy()
-
-if mes_sel != "Todos os Meses":
+if mes_sel != "Todos":
     df_f = df_f[df_f["MesAno"] == mes_sel]
 
-if setor_sel != "Todos os Setores" and coluna_setor:
-    df_f = df_f[df_f[coluna_setor] == setor_sel]
+if setor_sel != "Todos" and col_setor:
+    df_f = df_f[df_f[col_setor] == setor_sel]
 
-if lider_sel and coluna_lider:
-    df_f = df_f[df_f[coluna_lider].astype(str).isin(lider_sel)]
+if lider_sel and col_lider:
+    df_f = df_f[df_f[col_lider].isin(lider_sel)]
+
+# -----------------------------------------------------------
+# 🔥 FILTRO PRINCIPAL (SÓ QUEM TEM DOR)
+# -----------------------------------------------------------
+df_f = df_f[df_f[col_dor_flag].str.lower() == "sim"]
 
 if df_f.empty:
-    st.info("Nenhum dado encontrado para os filtros selecionados.")
+    st.warning("Nenhuma pessoa com dor encontrada")
     st.stop()
 
 # -----------------------------------------------------------
-# CONTAGEM DAS DORES
+# TRATAR LOCAL DA DOR
 # -----------------------------------------------------------
-if coluna_dor:
-    df_dores = df_f[coluna_dor].astype(str).str.get_dummies(sep=",")
-    df_dores.columns = df_dores.columns.str.strip()
+df_dores = (
+    df_f[col_local_dor]
+    .dropna()
+    .str.replace("\xa0", " ")
+    .str.split(",")
+    .explode()
+    .str.strip()
+)
 
-    df_contagem = (
-        df_dores.sum()
-        .reset_index()
-        .rename(columns={"index": "Parte", 0: "Qtd"})
-    )
-else:
-    st.warning("Coluna de dor não encontrada.")
-    st.stop()
+# remover lixo
+df_dores = df_dores[~df_dores.isin(["", "nan", "None"])]
+
+# contagem real
+df_contagem = df_dores.value_counts().reset_index()
+df_contagem.columns = ["Parte do Corpo", "Quantidade"]
 
 # -----------------------------------------------------------
-# LAYOUT COM GRÁFICO + TABELA
+# LAYOUT
 # -----------------------------------------------------------
-col1, col2 = st.columns([0.6, 0.4])
+col1, col2 = st.columns([0.7, 0.3])
 
 with col1:
-    df_plot = df_contagem[df_contagem["Qtd"] > 0].sort_values("Qtd", ascending=True)
+    st.subheader("📊 Dores por Região do Corpo")
 
     fig = px.bar(
-        df_plot,
-        x="Qtd",
-        y="Parte",
+        df_contagem.sort_values("Quantidade"),
+        x="Quantidade",
+        y="Parte do Corpo",
         orientation="h",
-        text="Qtd",
-        title="📊 Frequência de Dores por Região do Corpo"
+        text="Quantidade"
     )
 
-    fig.update_layout(
-        height=650,
-        yaxis=dict(categoryorder='total ascending')
-    )
+    fig.update_layout(height=500)
 
     st.plotly_chart(fig, use_container_width=True)
 
 with col2:
-    st.subheader("📊 Frequência por Local")
+    st.subheader("📋 Resumo")
 
-    st.dataframe(
-        df_contagem.sort_values("Qtd", ascending=False),
-        hide_index=True,
-        use_container_width=True
-    )
+    st.metric("Total com dor", len(df_f))
+
+    st.dataframe(df_contagem, use_container_width=True)
